@@ -1,116 +1,209 @@
-// DESAFIO: Editor de Texto com Undo/Redo
-// PROBLEMA: Um editor de texto precisa implementar operações de desfazer/refazer para
-// múltiplas ações (digitar, deletar, formatar). O código atual chama métodos diretamente,
-// tornando impossível desfazer operações ou implementar histórico de comandos
-
 using System;
 using System.Collections.Generic;
 
 namespace DesignPatternChallenge
 {
-    // Contexto: Editor de texto que precisa registrar e reverter operações
-    // Usuário espera poder desfazer/refazer qualquer ação
-    
+    // ============================
+    // 1) RECEIVER (quem executa de verdade)
+    // ============================
     public class TextEditor
     {
-        private string _content;
-        private string _selectedText;
-        private int _cursorPosition;
-
-        public TextEditor()
-        {
-            _content = "";
-            _cursorPosition = 0;
-        }
+        private string _content = "";
+        private int _cursorPosition = 0;
 
         public void InsertText(string text)
         {
             _content = _content.Insert(_cursorPosition, text);
             _cursorPosition += text.Length;
+
             Console.WriteLine($"[Editor] Texto inserido: '{text}'");
             Console.WriteLine($"[Editor] Conteúdo atual: '{_content}'");
         }
 
-        public void DeleteText(int length)
+        public string DeleteText(int length)
         {
-            if (_cursorPosition >= length)
-            {
-                _content = _content.Remove(_cursorPosition - length, length);
-                _cursorPosition -= length;
-                Console.WriteLine($"[Editor] {length} caracteres deletados");
-                Console.WriteLine($"[Editor] Conteúdo atual: '{_content}'");
-            }
+            if (length <= 0) return "";
+            if (_cursorPosition < length) length = _cursorPosition;
+
+            var start = _cursorPosition - length;
+            var removed = _content.Substring(start, length);
+
+            _content = _content.Remove(start, length);
+            _cursorPosition -= length;
+
+            Console.WriteLine($"[Editor] {length} caracteres deletados");
+            Console.WriteLine($"[Editor] Conteúdo atual: '{_content}'");
+
+            return removed;
         }
 
         public void SetBold(int start, int length)
         {
             Console.WriteLine($"[Editor] Aplicando negrito de {start} a {start + length}");
-            // Simulação de formatação
+            // Simulação
         }
 
         public void RemoveBold(int start, int length)
         {
             Console.WriteLine($"[Editor] Removendo negrito de {start} a {start + length}");
+            // Simulação
         }
 
         public void SetCursorPosition(int position)
         {
+            if (position < 0) position = 0;
+            if (position > _content.Length) position = _content.Length;
             _cursorPosition = position;
         }
 
-        public string GetContent()
+        public int GetCursorPosition() => _cursorPosition;
+        public string GetContent() => _content;
+    }
+
+    // ============================
+    // 2) COMMAND
+    // ============================
+    public interface IEditorCommand
+    {
+        void Execute();
+        void Undo();
+    }
+
+    // ============================
+    // 3) CONCRETE COMMANDS
+    // ============================
+    public class InsertTextCommand : IEditorCommand
+    {
+        private readonly TextEditor _editor;
+        private readonly string _text;
+        private int _positionBefore;
+
+        public InsertTextCommand(TextEditor editor, string text)
         {
-            return _content;
+            _editor = editor;
+            _text = text;
         }
 
-        public int GetCursorPosition()
+        public void Execute()
         {
-            return _cursorPosition;
+            _positionBefore = _editor.GetCursorPosition();
+            _editor.InsertText(_text);
+        }
+
+        public void Undo()
+        {
+            // desfazer insert = deletar o que foi inserido
+            _editor.SetCursorPosition(_positionBefore + _text.Length);
+            _editor.DeleteText(_text.Length);
         }
     }
 
-    // Problema: Aplicação chama métodos diretamente, sem forma de desfazer
-    public class EditorApplication
+    public class DeleteTextCommand : IEditorCommand
     {
-        private TextEditor _editor;
+        private readonly TextEditor _editor;
+        private readonly int _length;
+        private int _positionBefore;
+        private string _deletedText = "";
 
-        public EditorApplication()
+        public DeleteTextCommand(TextEditor editor, int length)
         {
-            _editor = new TextEditor();
+            _editor = editor;
+            _length = length;
         }
 
-        public void TypeText(string text)
+        public void Execute()
         {
-            // Problema: Operação executada diretamente
-            // Como desfazer isso depois?
-            _editor.InsertText(text);
+            _positionBefore = _editor.GetCursorPosition();
+            _deletedText = _editor.DeleteText(_length);
         }
 
-        public void DeleteCharacters(int count)
-        {
-            // Problema: Não há registro do que foi deletado
-            // Como restaurar o texto deletado?
-            _editor.DeleteText(count);
-        }
-
-        public void MakeBold(int start, int length)
-        {
-            // Problema: Como reverter esta formatação?
-            _editor.SetBold(start, length);
-        }
-
-        // Problema: Como implementar Undo/Redo sem refatorar tudo?
         public void Undo()
         {
-            // ??? Como saber qual foi a última operação?
-            // ??? Como reverter sem conhecer os parâmetros originais?
-            Console.WriteLine("❌ Undo não implementado - não há histórico de operações!");
+            // desfazer delete = inserir de volta no lugar certo
+            _editor.SetCursorPosition(_positionBefore - _deletedText.Length);
+            _editor.InsertText(_deletedText);
+        }
+    }
+
+    public class BoldCommand : IEditorCommand
+    {
+        private readonly TextEditor _editor;
+        private readonly int _start;
+        private readonly int _length;
+
+        public BoldCommand(TextEditor editor, int start, int length)
+        {
+            _editor = editor;
+            _start = start;
+            _length = length;
+        }
+
+        public void Execute() => _editor.SetBold(_start, _length);
+
+        public void Undo() => _editor.RemoveBold(_start, _length);
+    }
+
+    // ============================
+    // 4) INVOKER (histórico Undo/Redo)
+    // ============================
+    public class CommandHistory
+    {
+        private readonly Stack<IEditorCommand> _undoStack = new();
+        private readonly Stack<IEditorCommand> _redoStack = new();
+
+        public void ExecuteCommand(IEditorCommand command)
+        {
+            command.Execute();
+            _undoStack.Push(command);
+            _redoStack.Clear(); // ao executar algo novo, redo anterior não faz sentido
+        }
+
+        public void Undo()
+        {
+            if (_undoStack.Count == 0)
+            {
+                Console.WriteLine("⚠️ Nada para desfazer.");
+                return;
+            }
+
+            var cmd = _undoStack.Pop();
+            cmd.Undo();
+            _redoStack.Push(cmd);
         }
 
         public void Redo()
         {
-            Console.WriteLine("❌ Redo não implementado!");
+            if (_redoStack.Count == 0)
+            {
+                Console.WriteLine("⚠️ Nada para refazer.");
+                return;
+            }
+
+            var cmd = _redoStack.Pop();
+            cmd.Execute();
+            _undoStack.Push(cmd);
         }
+    }
+
+    // ============================
+    // 5) CLIENT (aplicação)
+    // ============================
+    public class EditorApplication
+    {
+        private readonly TextEditor _editor = new();
+        private readonly CommandHistory _history = new();
+
+        public void TypeText(string text)
+            => _history.ExecuteCommand(new InsertTextCommand(_editor, text));
+
+        public void DeleteCharacters(int count)
+            => _history.ExecuteCommand(new DeleteTextCommand(_editor, count));
+
+        public void MakeBold(int start, int length)
+            => _history.ExecuteCommand(new BoldCommand(_editor, start, length));
+
+        public void Undo() => _history.Undo();
+        public void Redo() => _history.Redo();
 
         public void ShowContent()
         {
@@ -120,114 +213,14 @@ namespace DesignPatternChallenge
         }
     }
 
-    // Tentativa ingênua: Guardar estados completos
-    public class EditorWithStateHistory
-    {
-        private TextEditor _editor;
-        private Stack<string> _contentHistory;
-
-        public EditorWithStateHistory()
-        {
-            _editor = new TextEditor();
-            _contentHistory = new Stack<string>();
-        }
-
-        public void TypeText(string text)
-        {
-            // Problema: Guardar estado completo consome muita memória
-            _contentHistory.Push(_editor.GetContent());
-            _editor.InsertText(text);
-        }
-
-        public void DeleteCharacters(int count)
-        {
-            _contentHistory.Push(_editor.GetContent());
-            _editor.DeleteText(count);
-        }
-
-        public void Undo()
-        {
-            if (_contentHistory.Count > 0)
-            {
-                // Problema: Restaurar estado completo é ineficiente
-                // Problema: Perde informações como posição do cursor
-                string previousContent = _contentHistory.Pop();
-                Console.WriteLine($"[Undo] Restaurando estado anterior");
-                // Como restaurar? _editor é privado e não tem setter
-            }
-        }
-
-        // Problema: Redo é ainda mais complicado - precisa de outra pilha
-    }
-
-    // Tentativa com registro de operações (sem pattern adequado)
-    public class Operation
-    {
-        public string Type { get; set; }
-        public string Text { get; set; }
-        public int Position { get; set; }
-        public int Length { get; set; }
-    }
-
-    public class EditorWithOperationLog
-    {
-        private TextEditor _editor;
-        private Stack<Operation> _operations;
-
-        public EditorWithOperationLog()
-        {
-            _editor = new TextEditor();
-            _operations = new Stack<Operation>();
-        }
-
-        public void TypeText(string text)
-        {
-            _operations.Push(new Operation 
-            { 
-                Type = "Insert", 
-                Text = text,
-                Position = _editor.GetCursorPosition()
-            });
-            _editor.InsertText(text);
-        }
-
-        public void Undo()
-        {
-            if (_operations.Count > 0)
-            {
-                var op = _operations.Pop();
-                
-                // Problema: Switch case gigante para cada tipo de operação
-                switch (op.Type)
-                {
-                    case "Insert":
-                        // Reverter inserção = deletar
-                        _editor.SetCursorPosition(op.Position + op.Text.Length);
-                        _editor.DeleteText(op.Text.Length);
-                        break;
-                    case "Delete":
-                        // Reverter deleção = inserir de volta
-                        _editor.SetCursorPosition(op.Position);
-                        _editor.InsertText(op.Text);
-                        break;
-                    case "Bold":
-                        // Reverter formatação
-                        _editor.RemoveBold(op.Position, op.Length);
-                        break;
-                    // Adicionar novo tipo = modificar este switch
-                }
-            }
-        }
-
-        // Problema: Lógica de desfazer está acoplada à aplicação
-        // Problema: Cada novo comando requer modificar o switch
-    }
-
+    // ============================
+    // 6) DEMO
+    // ============================
     class Program
     {
         static void Main(string[] args)
         {
-            Console.WriteLine("=== Editor de Texto - Problema de Undo/Redo ===\n");
+            Console.WriteLine("=== Editor de Texto (Command + Undo/Redo) ===\n");
 
             var app = new EditorApplication();
 
@@ -236,36 +229,23 @@ namespace DesignPatternChallenge
             app.TypeText(" World");
             app.ShowContent();
 
-            app.DeleteCharacters(6); // Deletar " World"
+            app.DeleteCharacters(6); // remove " World"
             app.ShowContent();
 
-            app.MakeBold(0, 5); // Negrito em "Hello"
+            app.MakeBold(0, 5); // formatação (simulada)
 
-            Console.WriteLine("\n=== Tentando Desfazer ===");
-            app.Undo(); // Não funciona!
+            Console.WriteLine("\n=== Undo (3x) ===");
+            app.Undo(); // desfaz bold
+            app.Undo(); // desfaz delete (volta " World")
+            app.Undo(); // desfaz insert " World"
+            app.ShowContent();
 
-            Console.WriteLine("\n=== PROBLEMAS ===");
-            Console.WriteLine("✗ Impossível desfazer operações - não há histórico");
-            Console.WriteLine("✗ Operações executadas diretamente sem encapsulamento");
-            Console.WriteLine("✗ Não dá para parametrizar, enfileirar ou registrar operações");
-            Console.WriteLine("✗ Difícil implementar macros (sequência de comandos)");
-            Console.WriteLine("✗ Não há separação entre invocação e execução");
-            Console.WriteLine("✗ Cada operação precisa saber como se reverter");
-            Console.WriteLine("✗ Lógica de desfazer/refazer acoplada à aplicação");
+            Console.WriteLine("\n=== Redo (2x) ===");
+            app.Redo(); // refaz insert " World"
+            app.Redo(); // refaz delete
+            app.ShowContent();
 
-            Console.WriteLine("\n=== Requisitos Não Atendidos ===");
-            Console.WriteLine("• Undo/Redo de qualquer operação");
-            Console.WriteLine("• Histórico de operações");
-            Console.WriteLine("• Macros (executar múltiplos comandos de uma vez)");
-            Console.WriteLine("• Comandos parametrizáveis");
-            Console.WriteLine("• Log de auditoria");
-            Console.WriteLine("• Transações (executar tudo ou nada)");
-
-            // Perguntas para reflexão:
-            // - Como encapsular operações como objetos?
-            // - Como parametrizar, enfileirar e registrar requisições?
-            // - Como implementar operações reversíveis (undo)?
-            // - Como desacoplar emissor do comando de quem o executa?
+            Console.WriteLine("✅ Agora dá para desfazer/refazer qualquer operação via histórico.");
         }
     }
 }
